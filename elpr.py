@@ -1,17 +1,17 @@
-#!/usr/bin/python3
+#!/usr/bin/python3 -u
 # coding=utf8
-        
+
 """
 Popis: Viz. usage()
 Autor: Jindrich Vrba
 Dne: 21.11.2o2o
-Posledni uprava: 4.12.2o2o
+Posledni uprava: 14.12.2o2o
 """
 
 #TODO jen bezdratove zakazniky
 
 import sys, getpass, getopt, signal, fcntl, os, rrdtool
-sys.path.append('./lib')
+sys.path.append('/opt/lib')
 import dtb
 
 #standardni chovani pri CTRL+C nebo ukonceni roury
@@ -44,10 +44,8 @@ def usage(vystup):
   přetížení rádiových spojů pomocí řízeného shapingu provozu. Představa je
   taková, že to celé bude řídit Linux server, který bude získávat
   informace z desítek páteřních routerů v síti, samotný shaping pak bude
-  upravovat na stovkách routerů co nejblíže k zákazníkovi. Jako smart mi
-  zde přijde, že je to úplně nový přístup, který by měl reagovat na rychle
-  se měnící podmínky v zarušených bezdrátových sítích.
-  
+  upravovat na stovkách routerů co nejblíže k zákazníkovi.
+
 Pouziti:
 %s ["-h"|"--help"]
   \n""" % sys.argv[0])
@@ -82,12 +80,47 @@ def rrd_stat(cursor,cislo_smlouvy):
       except rrdtool.OperationalError as err:
         sys.stderr.write("WARNING IP %s - rrdtool.OperationalError: %s" % (ip,err))
         continue
-      sys.stderr.write("DEBUG temp: %s\n" % temp)
+      #sys.stderr.write("DEBUG temp: %s\n" % temp)
       if (temp[0] != "-nan"): soucet_down += int(temp[0])
       if (temp[1] != "-nan"): soucet_up   += int(temp[1])
 
   #print(soucet_down, soucet_up)
   return (soucet_down, soucet_up)
+
+
+def get_rtt_stdev(cursor,cislo_smlouvy):
+  """ Smerodatna odchylka za poslednich 10 minut.
+  @param cursor: databazovy kurzor
+  @return: smerodatna_odchylka v [ms]
+  """
+  cursor.execute("select ip_klienta from zakaznici where cislo_smlouvy=%d" % cislo_smlouvy)
+  ip_klienta = cursor.fetchone()[0]
+  sys.stderr.write("DEBUG %s: klient %s\n" % (cislo_smlouvy, ip_klienta))
+
+  #zbytek modula 20ti
+  zbytek=int(ip_klienta.split('.')[3]) % 20
+  #soubory maji misto tecek podtrzitka
+  ip_=ip_klienta.replace('.','_')
+
+  if not os.path.isfile("/var/lib/smokeping/Zakaznici/z%s/%s.rrd" % (zbytek,ip_)):
+    sys.stderr.write("WARNING IP %s - neexistují RRD statistiky")
+    return None
+
+  try:
+    stdev=rrdtool.graph('temp.png','-s','now-600s','-e','now',
+      'DEF:median=/var/lib/smokeping/Zakaznici/z%s/%s.rrd:median:AVERAGE' % (zbytek,ip_),
+      'CDEF:median_ms=median,1000,*',
+      'VDEF:stdev=median_ms,STDEV',
+      'VDEF:avg_median=median_ms,AVERAGE',
+      'PRINT:stdev:%.1lf')[2][0]
+  except rrdtool.OperationalError as err:
+    sys.stderr.write("WARNING IP %s - rrdtool.OperationalError: %s" % (ip,err))
+    return None
+
+  if (stdev=="-nan"):
+    return None
+  else:
+    return float(stdev)
 
 
 def overit(cursor, cislo_smlouvy):
@@ -98,9 +131,9 @@ def overit(cursor, cislo_smlouvy):
   """
   sys.stdout.write("DEBUG %d\n" % (cislo_smlouvy))
 
-  #TODO pokud jen g_u=u a g_d=d nema smysl shapovat - mozna uz v SQL dotazu
+  ### TODO pokud je g_u=u a g_d=d nema smysl shapovat - mozna uz v SQL dotazu
 
-  #pokud zakaznik nevyuziva alespon svoji garantovanou rychlost, neni co shapovat
+  ### pokud zakaznik nevyuziva alespon svoji garantovanou rychlost, neni co shapovat
   down,up=rrd_stat(cursor,cislo_smlouvy)
   sys.stderr.write("DEBUG down=%d, up=%d [kbit]\n" % (down,up))
   cursor.execute("select CAST(greatest(garant_down,max_down/10) AS UNSIGNED),CAST(greatest(garant_up,max_up/10) AS UNSIGNED),max_down,max_up from zakaznici where cislo_smlouvy=%d" % (cislo_smlouvy))
@@ -116,8 +149,14 @@ def overit(cursor, cislo_smlouvy):
   if (vyuziti_procent_garant<100):
     return False
 
-  #TODO doplnit dalsi overeni - napr pingy by mely kolisat, jinak by to mohl byt false positive kvuli prepojeni
+  ### odezva by mela kolisat, jinak by se mohlo jednat o false positive kvuli prepojeni zakaznika
+  stdev=get_rtt_stdev(cursor,cislo_smlouvy) #v ms
+  sys.stderr.write("DEBUG stdev %.1f\n" % stdev)
+  #TODO doladit presnou hodnotu
+  if (stdev<10):
+    return False
 
+  #pokud proslo vsemi kontrolami, je vhodne k rizenemu shapingu
   return True
 
 
@@ -140,22 +179,24 @@ if __name__ == "__main__":
     sys.stderr.write("Spatny pocet parametru.\n")
     usage(sys.stderr)
     sys.exit(1)
-  
+
   zamek = Zamek()
 
   conn = dtb.connect(charset="utf8", use_unicode=True)
   cursor = conn.cursor()
 
   #TODO
-  overit(cursor,110328)
+  #overit(cursor,110328)
+  #overit(cursor,)
+  #sys.exit()
 
   if zamek.zamkni():
-    #zkusebne, zatim odchytavam jen uplne extremy
+    #TODO zatim zkusebni hodnoty, upravuji jak se mi to hodi pro testovani
     #TODO 10m_rtt je mozna 1h_rtt
     cursor.execute("""
       select Z.cislo_smlouvy,ZS.10m_rtt,ZS.den_rtt
       from zakaznici_statistiky ZS JOIN zakaznici Z ON ZS.cislo_smlouvy=Z.cislo_smlouvy
-      where Z.odpojen=0 AND ZS.10m_rtt>8*ZS.den_rtt AND ZS.10m_rtt>20
+      where Z.odpojen=0 AND ZS.10m_rtt>5*ZS.den_rtt AND ZS.10m_rtt>15
       """)
     rows=cursor.fetchall()
     for cislo_smlouvy,rtt_10m,rtt_den in rows:
