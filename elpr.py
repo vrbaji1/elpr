@@ -63,9 +63,9 @@ def rrd_stat(cursor,cislo_smlouvy):
   #secteme vsechny IP zakaznika
   cursor.execute ("select ip_adresa from lokalni_ip where cislo_smlouvy=%s and aktivni=1" % cislo_smlouvy)
   rows = cursor.fetchall()
-  sys.stderr.write("DEBUG %s: %s\n" % (cislo_smlouvy, rows))
+  #sys.stderr.write("DEBUG %s: %s\n" % (cislo_smlouvy, rows))
   for ip, in rows:
-    sys.stderr.write("DEBUG %s\n" % ip)
+    #sys.stderr.write("DEBUG %s\n" % ip)
     if os.path.isfile("/raid/ipac/rrd_real/host-%s.rrd" % ip):
       try:
         temp=rrdtool.graph('temp.png','-s','now-10m','-e','now',
@@ -95,7 +95,7 @@ def get_rtt_stdev(cursor,cislo_smlouvy):
   """
   cursor.execute("select ip_klienta from zakaznici where cislo_smlouvy=%d" % cislo_smlouvy)
   ip_klienta = cursor.fetchone()[0]
-  sys.stderr.write("DEBUG %s: klient %s\n" % (cislo_smlouvy, ip_klienta))
+  #sys.stderr.write("DEBUG %s: klient %s\n" % (cislo_smlouvy, ip_klienta))
 
   #zbytek modula 20ti
   zbytek=int(ip_klienta.split('.')[3]) % 20
@@ -129,23 +129,24 @@ def overit(cursor, cislo_smlouvy):
   @param cursor: databazovy kurzor
   @return: True / False
   """
-  sys.stdout.write("DEBUG %d\n" % (cislo_smlouvy))
+  #sys.stdout.write("DEBUG %d\n" % (cislo_smlouvy))
 
   ### TODO pokud je g_u=u a g_d=d nema smysl shapovat - mozna uz v SQL dotazu
 
   ### pokud zakaznik nevyuziva alespon svoji garantovanou rychlost, neni co shapovat
   down,up=rrd_stat(cursor,cislo_smlouvy)
-  sys.stderr.write("DEBUG down=%d, up=%d [kbit]\n" % (down,up))
-  cursor.execute("select CAST(greatest(garant_down,max_down/10) AS UNSIGNED),CAST(greatest(garant_up,max_up/10) AS UNSIGNED),max_down,max_up from zakaznici where cislo_smlouvy=%d" % (cislo_smlouvy))
+  #sys.stderr.write("DEBUG poslednich 10m: down=%d, up=%d [kbit]\n" % (down,up))
+  #TODO doladit vychozi hodnotu garantovane rychlosti
+  cursor.execute("select CAST(greatest(garant_down,max_down/2) AS UNSIGNED),CAST(greatest(garant_up,max_up/10) AS UNSIGNED),max_down,max_up from zakaznici where cislo_smlouvy=%d" % (cislo_smlouvy))
   row=cursor.fetchone()
-  sys.stderr.write("DEBUG g_d, g_u, d, u [kbit]: %s\n" % str(row))
+  #sys.stderr.write("DEBUG sluzba g_d, g_u, d, u [kbit]: %s\n" % str(row))
   g_d, g_u, d, u = row
   sys.stderr.write("DEBUG vyuzito %.2f%% z garant_down\n" % ( 100.0*down/g_d ))
   sys.stderr.write("DEBUG vyuzito %.2f%% z garant_up\n" % ( 100.0*up/g_u ))
-  sys.stderr.write("DEBUG vyuzito %.2f%% z max_down\n" % ( 100.0*down/d ))
-  sys.stderr.write("DEBUG vyuzito %.2f%% z max_up\n" % ( 100.0*up/u ))
+  #sys.stderr.write("DEBUG vyuzito %.2f%% z max_down\n" % ( 100.0*down/d ))
+  #sys.stderr.write("DEBUG vyuzito %.2f%% z max_up\n" % ( 100.0*up/u ))
   vyuziti_procent_garant=int(max(100.0*down/g_d,100.0*up/g_u))
-  sys.stderr.write("DEBUG vyuziti_procent_garant=%d\n" % vyuziti_procent_garant)
+  #sys.stderr.write("DEBUG vyuziti_procent_garant=%d\n" % vyuziti_procent_garant)
   if (vyuziti_procent_garant<100):
     return False
 
