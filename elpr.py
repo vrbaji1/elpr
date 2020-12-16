@@ -33,6 +33,19 @@ class Zamek:
     return True
 
 
+#TODO doplnit
+class Zakaznik:
+  """ Trida zakaznika
+  """
+  def __init__(self, cislo_smlouvy):
+    self.cislo_smlouvy = cislo_smlouvy
+    self.now_stdev = None
+    self.den_rtt = None
+    self.now_rtt = None
+  def __str__(self):
+    return "objekt zakaznik %d: den_rtt:%s, now_rtt:%s, now_stdev:%s" % (self.cislo_smlouvy, self.den_rtt, self.now_rtt, self.now_stdev)
+
+
 def usage(vystup):
   """ Použití programu
   @param vystup: Kam se bude vypisovat - nejbezneji sys.stderr nebo sys.stdout
@@ -127,7 +140,7 @@ def overit(cursor, cislo_smlouvy):
   """ Overi, jestli dany zakaznik je vhodny k aplikaci rizeneho shapingu.
   TODO
   @param cursor: databazovy kurzor
-  @return: True / False
+  @return: (True, Zakaznik) / (False, None)
   """
   #sys.stdout.write("DEBUG %d\n" % (cislo_smlouvy))
 
@@ -148,17 +161,19 @@ def overit(cursor, cislo_smlouvy):
   vyuziti_procent_garant=int(max(100.0*down/g_d,100.0*up/g_u))
   #sys.stderr.write("DEBUG vyuziti_procent_garant=%d\n" % vyuziti_procent_garant)
   if (vyuziti_procent_garant<100):
-    return False
+    return (False, None)
 
   ### odezva by mela kolisat, jinak by se mohlo jednat o false positive kvuli prepojeni zakaznika
   stdev=get_rtt_stdev(cursor,cislo_smlouvy) #v ms
   sys.stderr.write("DEBUG stdev %.1f\n" % stdev)
   #TODO doladit presnou hodnotu
   if (stdev<10):
-    return False
+    return (False, None)
 
   #pokud proslo vsemi kontrolami, je vhodne k rizenemu shapingu
-  return True
+  zakaznik = Zakaznik(cislo_smlouvy)
+  zakaznik.now_stdev = stdev
+  return (True, zakaznik)
 
 
 if __name__ == "__main__":
@@ -191,20 +206,30 @@ if __name__ == "__main__":
   #overit(cursor,)
   #sys.exit()
 
-  if zamek.zamkni():
-    #TODO zatim zkusebni hodnoty, upravuji jak se mi to hodi pro testovani
-    #TODO 10m_rtt je mozna 1h_rtt
-    cursor.execute("""
-      select Z.cislo_smlouvy,ZS.10m_rtt,ZS.den_rtt
-      from zakaznici_statistiky ZS JOIN zakaznici Z ON ZS.cislo_smlouvy=Z.cislo_smlouvy
-      where Z.odpojen=0 AND ZS.10m_rtt>5*ZS.den_rtt AND ZS.10m_rtt>15
-      """)
-    rows=cursor.fetchall()
-    for cislo_smlouvy,rtt_10m,rtt_den in rows:
-      sys.stdout.write("DEBUG %10d: 10m_rtt=%d, den:rtt=%d\n" % (cislo_smlouvy,rtt_10m,rtt_den))
-      sledovat=overit(cursor,cislo_smlouvy)
-      sys.stdout.write("DEBUG === sledovat:%s ===\n\n" % sledovat)
-  else:
+  L_shapovat = []
+
+  if not zamek.zamkni():
     sys.stderr.write("Jina instance programu uz je spustena!\n")
+    sys.exit(1)
+
+  #TODO zatim zkusebni hodnoty, upravuji jak se mi to hodi pro testovani
+  #TODO 10m_rtt je mozna 1h_rtt
+  cursor.execute("""
+    select Z.cislo_smlouvy,ZS.10m_rtt,ZS.den_rtt
+    from zakaznici_statistiky ZS JOIN zakaznici Z ON ZS.cislo_smlouvy=Z.cislo_smlouvy
+    where Z.odpojen=0 AND ZS.10m_rtt>5*ZS.den_rtt AND ZS.10m_rtt>15
+    """)
+  rows=cursor.fetchall()
+  for cislo_smlouvy,rtt_10m,rtt_den in rows:
+    sys.stdout.write("DEBUG %10d: 10m_rtt=%d, den:rtt=%d\n" % (cislo_smlouvy,rtt_10m,rtt_den))
+    sledovat,zakaznik=overit(cursor,cislo_smlouvy)
+    sys.stdout.write("DEBUG === sledovat:%s ===\n\n" % sledovat)
+    if (sledovat==True):
+      zakaznik.den_rtt = rtt_den
+      zakaznik.now_rtt = rtt_10m
+      L_shapovat.append(zakaznik)
+
+  for zakaznik in L_shapovat:
+    print("DEBUG %s" % (zakaznik))
 
   conn.close()
