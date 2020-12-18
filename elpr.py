@@ -69,7 +69,7 @@ class Zakaznik:
 
   #TODO
   def proved_shaping(self):
-    """ Realizuje shaping a zapise aktualni hodnoty do databaze.
+    """ Realizuje shaping.
     """
     #pokud se nic nezmenilo, neni co spoustet
     if (self.now_down==self.new_down and self.now_up==self.new_up):
@@ -77,11 +77,16 @@ class Zakaznik:
     print("TODO zmenit rychlost na down:%d, up:%d" % (self.new_down, self.new_up))
 
     prikaz="""/opt/shaper/add.py change {self.cislo_smlouvy} {self.garant_down} {self.garant_up} {self.new_down} 0 {self.new_up} 0 0 generuj test_vyvoj_eliminace_pretizeni""".format(self=self)
-    print("DEBUG prikaz:%s" % prikaz)
+    print("TODO prikaz:%s" % prikaz)
 
     #errcode = ssh.command("shaper",prikaz)
     #print(errcode)
 
+  def aktualizuj_udaje(self, cursor):
+    """ Zapise nove hodnoty do databaze.
+    """
+    print("DEBUG replace into elpr (cislo_smlouvy, down, up) VALUES ({self.cislo_smlouvy:d}, {self.new_down:d}, {self.new_up:d})".format(self=self))
+    cursor.execute("replace into elpr (cislo_smlouvy, down, up) VALUES ({self.cislo_smlouvy:d}, {self.new_down:d}, {self.new_up:d})".format(self=self))
 
   def __str__(self):
     popis = """objekt zakaznik %d: den_rtt:%s, now_rtt:%s, now_stdev:%s
@@ -235,6 +240,23 @@ def overit(cursor, cislo_smlouvy):
   return (True, z)
 
 
+def get_evidovani_elpr(cursor):
+  """ Vrati seznam zakazniku, kteri jsou jiz rizeni pomoci eliminace pretizeni.
+  @param cursor: databazovy kurzor
+  @return: L
+  """
+  L = []
+  cursor.execute("select cislo_smlouvy,down,up from elpr")
+  rows=cursor.fetchall()
+  for cislo_smlouvy,down,up in rows:
+    z = Zakaznik(cislo_smlouvy)
+    z.now_down = down
+    z.now_up = up
+    L.append(z)
+
+  return L
+
+
 if __name__ == "__main__":
   if (getpass.getuser() != "statistiky"):
     sys.stderr.write("Tento skript smi pouzivat jen uzivatel statistiky.\n")
@@ -256,6 +278,9 @@ if __name__ == "__main__":
     sys.exit(1)
 
   zamek = Zamek()
+  if not zamek.zamkni():
+    sys.stderr.write("Jina instance programu uz je spustena!\n")
+    sys.exit(1)
 
   conn = dtb.connect(charset="utf8", use_unicode=True)
   cursor = conn.cursor()
@@ -271,18 +296,18 @@ if __name__ == "__main__":
   #print("DEBUG %s" % (z))
   #sys.exit()
 
-  L_shapovat = []
+  #seznam jiz evidovanych
+  L_elpr = get_evidovani_elpr(cursor)
 
-  if not zamek.zamkni():
-    sys.stderr.write("Jina instance programu uz je spustena!\n")
-    sys.exit(1)
-
+  #vycist nove pripady k eliminaci pretizeni
   #TODO zatim zkusebni hodnoty, upravuji jak se mi to hodi pro testovani
   #TODO 10m_rtt je mozna 1h_rtt
+  #vycist zakazniky s prekrocenymi meznimi hodnotami, vynechat jiz rizene
   cursor.execute("""
     select Z.cislo_smlouvy,ZS.10m_rtt,ZS.den_rtt
     from zakaznici_statistiky ZS JOIN zakaznici Z ON ZS.cislo_smlouvy=Z.cislo_smlouvy
     where Z.odpojen=0 AND ZS.10m_rtt>5*ZS.den_rtt AND ZS.10m_rtt>15
+          AND Z.cislo_smlouvy not in (select cislo_smlouvy from elpr)
     """)
   rows=cursor.fetchall()
   for cislo_smlouvy,rtt_10m,rtt_den in rows:
@@ -292,11 +317,12 @@ if __name__ == "__main__":
     if (sledovat==True):
       zakaznik.den_rtt = rtt_den
       zakaznik.now_rtt = rtt_10m
-      L_shapovat.append(zakaznik)
+      L_elpr.append(zakaznik)
 
-  for zakaznik in L_shapovat:
+  for zakaznik in L_elpr:
     #print("DEBUG %s" % (zakaznik))
     zakaznik.navrhni_shaping()
     zakaznik.proved_shaping()
+    zakaznik.aktualizuj_udaje(cursor)
 
   conn.close()
