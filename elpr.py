@@ -38,20 +38,50 @@ class Zakaznik:
   """ Trida zakaznika
   """
   def __init__(self, cislo_smlouvy):
+    """ Pri vytvoreni objektu zakaznika rovnou naplni statistiky.
+    """
     self.cislo_smlouvy = cislo_smlouvy
-    #garantovane rychlosti
-    self.garant_down = None
-    self.garant_up = None
-    #aktualni rychlosti
-    self.now_down = None
-    self.now_up = None
-    #nove nastavene rychlosti shapingem
+
+    ### parametry sluzby
+    cursor.execute("""
+      select garant_down, garant_up, max_down, max_up
+      from zakaznici where cislo_smlouvy=%d
+      """ % self.cislo_smlouvy)
+    row=cursor.fetchone()
+    #maximalni rychlosti
+    max_down = row[2]
+    max_up = row[3]
+    #garantovane rychlosti - z databaze, ale ne nize nez 50% max rychlosti
+    self.garant_down = max(row[0],int(max_down/2))
+    self.garant_up   = max(row[1],int(max_up/2))
+    #aktualni rychlosti, bud jiz evidovane u rizenych zakanziku nebo maximalni rychlosti
+    cursor.execute("""
+      select down, up
+      from elpr where cislo_smlouvy=%d
+      """ % self.cislo_smlouvy)
+    if (cursor.rowcount!=0):
+      row=cursor.fetchone()
+      self.now_down = row[0]
+      self.now_up   = row[1]
+    else:
+      self.now_down = max_down
+      self.now_up   = max_up
+
+    ### statistiky
+    cursor.execute("""
+      select 10m_rtt, den_rtt
+      from zakaznici_statistiky where cislo_smlouvy=%d
+      """ % self.cislo_smlouvy)
+    row = cursor.fetchone()
+    self.now_rtt = row[0]
+    self.den_rtt = row[1]
+    #smerodatna odchylka z rrd databaze
+    self.now_stdev = get_rtt_stdev(cursor, self.cislo_smlouvy) #v ms
+
+    ### nove nastavene rychlosti shapingem - o nich se musi teprve rozhodnout
     self.new_down = None
     self.new_up = None
-    #statistiky
-    self.den_rtt = None
-    self.now_stdev = None
-    self.now_rtt = None
+
 
   #TODO
   def navrhni_shaping(self):
@@ -66,6 +96,7 @@ class Zakaznik:
     self.new_down=int(max(self.garant_down, self.now_down/snizit))
     self.new_up=int(max(self.garant_up, self.now_up/snizit))
     print("DEBUG %s" % (self))
+
 
   #TODO
   def proved_shaping(self):
@@ -82,11 +113,16 @@ class Zakaznik:
     #errcode = ssh.command("shaper",prikaz)
     #print(errcode)
 
+
   def aktualizuj_udaje(self, cursor):
     """ Zapise nove hodnoty do databaze.
     """
+    #pokud se nic nezmenilo, neni co aktualizovat
+    if (self.now_down==self.new_down and self.now_up==self.new_up):
+      return
     print("DEBUG replace into elpr (cislo_smlouvy, down, up) VALUES ({self.cislo_smlouvy:d}, {self.new_down:d}, {self.new_up:d})".format(self=self))
     cursor.execute("replace into elpr (cislo_smlouvy, down, up) VALUES ({self.cislo_smlouvy:d}, {self.new_down:d}, {self.new_up:d})".format(self=self))
+
 
   def __str__(self):
     popis = """objekt zakaznik %d: den_rtt:%s, now_rtt:%s, now_stdev:%s
