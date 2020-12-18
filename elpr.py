@@ -38,7 +38,7 @@ class Zakaznik:
   """ Trida zakaznika
   """
   def __init__(self, cislo_smlouvy):
-    """ Pri vytvoreni objektu zakaznika rovnou naplni statistiky.
+    """ Pri vytvoreni objektu zakaznika rovnou naplni parametry sluzby a statistiky.
     """
     self.cislo_smlouvy = cislo_smlouvy
 
@@ -49,12 +49,12 @@ class Zakaznik:
       """ % self.cislo_smlouvy)
     row=cursor.fetchone()
     #maximalni rychlosti
-    max_down = row[2]
-    max_up = row[3]
+    self.max_down = row[2]
+    self.max_up = row[3]
     #garantovane rychlosti - z databaze, ale ne nize nez 50% max rychlosti
-    self.garant_down = max(row[0],int(max_down/2))
-    self.garant_up   = max(row[1],int(max_up/2))
-    #aktualni rychlosti, bud jiz evidovane u rizenych zakanziku nebo maximalni rychlosti
+    self.garant_down = max(row[0],int(self.max_down/2))
+    self.garant_up   = max(row[1],int(self.max_up/2))
+    #aktualni rychlosti, bud jiz evidovane u rizenych zakazniku nebo maximalni rychlosti
     cursor.execute("""
       select down, up
       from elpr where cislo_smlouvy=%d
@@ -64,8 +64,8 @@ class Zakaznik:
       self.now_down = row[0]
       self.now_up   = row[1]
     else:
-      self.now_down = max_down
-      self.now_up   = max_up
+      self.now_down = self.max_down
+      self.now_up   = self.max_up
 
     ### statistiky
     cursor.execute("""
@@ -83,6 +83,15 @@ class Zakaznik:
     self.new_up = None
 
 
+  def navrhni_max_rychlosti(self):
+    """ Jako nove rychlosti pripravi maximalni rychlosti zakaznika.
+    """
+    print("\nDEBUG %s" % (self))
+    self.new_down = self.max_down
+    self.new_up   = self.max_up
+    print("DEBUG %s" % (self))
+
+
   #TODO
   def navrhni_shaping(self):
     """ Navrhne vhodnou upravu shapingu.
@@ -92,7 +101,7 @@ class Zakaznik:
     #TODO doladit pomer snizeni
     #TODO nemelo by se brat jeste v potaz max(?15?,self.den_rtt) ?
     snizit=self.now_rtt/self.den_rtt/3
-    print("DEBUG pomer znizeni shapingu %.2f" % (snizit))
+    print("DEBUG pomer snizeni shapingu %.2f" % (snizit))
     self.new_down=int(max(self.garant_down, self.now_down/snizit))
     self.new_up=int(max(self.garant_up, self.now_up/snizit))
     print("DEBUG %s" % (self))
@@ -118,28 +127,33 @@ class Zakaznik:
     """ Zapise nove hodnoty do databaze.
     """
     #pokud se nic nezmenilo, neni co aktualizovat
-    if (self.now_down==self.new_down and self.now_up==self.new_up):
+    if (self.new_down==self.now_down and self.new_up==self.now_up):
       return
-    print("DEBUG replace into elpr (cislo_smlouvy, down, up) VALUES ({self.cislo_smlouvy:d}, {self.new_down:d}, {self.new_up:d})".format(self=self))
-    cursor.execute("replace into elpr (cislo_smlouvy, down, up) VALUES ({self.cislo_smlouvy:d}, {self.new_down:d}, {self.new_up:d})".format(self=self))
+
+    #pokud jsou rychlosti aktualizovany na maximalni rychlosti, neprovadime rizeni a tedy mazeme z evidence
+    if (self.new_down==self.max_down and self.new_up==self.max_up):
+      print("DEBUG delete from elpr where cislo_smlouvy={self.cislo_smlouvy:d}".format(self=self))
+      cursor.execute("delete from elpr where cislo_smlouvy={self.cislo_smlouvy:d}".format(self=self))
+    else:
+      print("DEBUG replace into elpr (cislo_smlouvy, down, up) VALUES ({self.cislo_smlouvy:d}, {self.new_down:d}, {self.new_up:d})".format(self=self))
+      cursor.execute("replace into elpr (cislo_smlouvy, down, up) VALUES ({self.cislo_smlouvy:d}, {self.new_down:d}, {self.new_up:d})".format(self=self))
 
 
   def __str__(self):
     popis = """objekt zakaznik %d: den_rtt:%s, now_rtt:%s, now_stdev:%s
       """ % (self.cislo_smlouvy, self.den_rtt, self.now_rtt, self.now_stdev)
-    popis += """garant_down:%s garant_up:%s now_down:%s now_up:%s
-      """ % (self.garant_down, self.garant_up, self.now_down, self.now_up)
+    popis += """garant_down:%s garant_up:%s max_down:%s max_up:%s
+      """ % (self.garant_down, self.garant_up, self.max_down, self.max_up)
+    popis += """now_down:%s now_up:%s""" % (self.now_down, self.now_up)
     if (self.new_down or self.new_up):
-      popis += """new_down:%s new_up:%s
-      """ % (self.new_down, self.new_up)
+      popis += """ -> new_down:%s new_up:%s""" % (self.new_down, self.new_up)
     #return """objekt zakaznik %d: den_rtt:%s, now_rtt:%s, now_stdev:%s
     #garant_down:%d garant_up:%d now_down:%d now_up:%d
     #""" % (self.cislo_smlouvy, self.den_rtt, self.now_rtt, self.now_stdev
     #)
     #return """objekt zakaznik {x.cislo_smlouvy}: den_rtt:{x.den_rtt}, now_rtt:{x.now_rtt}, now_stdev:{x.now_stdev}
     #  garant_down:{x.garant_down} garant_up:{x.garant_up} now_down:{x.now_down} now_up:{x.now_up}""".format(x=self)
-    return popis.strip()
-
+    return popis
 
 
 def usage(vystup):
@@ -156,8 +170,12 @@ def usage(vystup):
   upravovat na stovkách routerů co nejblíže k zákazníkovi.
 
 Pouziti:
-%s ["-h"|"--help"]
-  \n""" % sys.argv[0])
+%s <on|off>
+%s [-h|--help]
+
+on  ... provadi detekci a eliminaci
+off ... kompletne vypne detekci a eliminaci
+  \n""" % (sys.argv[0], sys.argv[0]))
 
 
 def rrd_stat(cursor,cislo_smlouvy):
@@ -308,10 +326,16 @@ if __name__ == "__main__":
       usage(sys.stdout)
       sys.exit()
 
-  if (len(sys.argv) != 1):
+  if (len(sys.argv) != 2):
     sys.stderr.write("Spatny pocet parametru.\n")
     usage(sys.stderr)
     sys.exit(1)
+
+  if (sys.argv[1] not in ("on","off")):
+    sys.stderr.write("Neznamy parametr.\n")
+    usage(sys.stderr)
+    sys.exit(1)
+  operace=sys.argv[1]
 
   zamek = Zamek()
   if not zamek.zamkni():
@@ -335,30 +359,36 @@ if __name__ == "__main__":
   #seznam jiz evidovanych
   L_elpr = get_evidovani_elpr(cursor)
 
-  #vycist nove pripady k eliminaci pretizeni
-  #TODO zatim zkusebni hodnoty, upravuji jak se mi to hodi pro testovani
-  #TODO 10m_rtt je mozna 1h_rtt
-  #vycist zakazniky s prekrocenymi meznimi hodnotami, vynechat jiz rizene
-  cursor.execute("""
-    select Z.cislo_smlouvy,ZS.10m_rtt,ZS.den_rtt
-    from zakaznici_statistiky ZS JOIN zakaznici Z ON ZS.cislo_smlouvy=Z.cislo_smlouvy
-    where Z.odpojen=0 AND ZS.10m_rtt>5*ZS.den_rtt AND ZS.10m_rtt>15
-          AND Z.cislo_smlouvy not in (select cislo_smlouvy from elpr)
-    """)
-  rows=cursor.fetchall()
-  for cislo_smlouvy,rtt_10m,rtt_den in rows:
-    sys.stdout.write("DEBUG %10d: 10m_rtt=%d, den:rtt=%d\n" % (cislo_smlouvy,rtt_10m,rtt_den))
-    sledovat,zakaznik=overit(cursor,cislo_smlouvy)
-    sys.stdout.write("DEBUG === sledovat:%s ===\n\n" % sledovat)
-    if (sledovat==True):
-      zakaznik.den_rtt = rtt_den
-      zakaznik.now_rtt = rtt_10m
-      L_elpr.append(zakaznik)
+  if (operace=="off"):
+    for zakaznik in L_elpr:
+      zakaznik.navrhni_max_rychlosti()
+      zakaznik.proved_shaping()
+      zakaznik.aktualizuj_udaje(cursor)
+  else: #operace "on"
+    #vycist nove pripady k eliminaci pretizeni
+    #TODO zatim zkusebni hodnoty, upravuji jak se mi to hodi pro testovani
+    #TODO 10m_rtt je mozna 1h_rtt
+    #vycist zakazniky s prekrocenymi meznimi hodnotami, vynechat jiz rizene
+    cursor.execute("""
+      select Z.cislo_smlouvy,ZS.10m_rtt,ZS.den_rtt
+      from zakaznici_statistiky ZS JOIN zakaznici Z ON ZS.cislo_smlouvy=Z.cislo_smlouvy
+      where Z.odpojen=0 AND ZS.10m_rtt>5*ZS.den_rtt AND ZS.10m_rtt>15
+            AND Z.cislo_smlouvy not in (select cislo_smlouvy from elpr)
+      """)
+    rows=cursor.fetchall()
+    for cislo_smlouvy,rtt_10m,rtt_den in rows:
+      sys.stdout.write("DEBUG %10d: 10m_rtt=%d, den:rtt=%d\n" % (cislo_smlouvy,rtt_10m,rtt_den))
+      sledovat,zakaznik=overit(cursor,cislo_smlouvy)
+      sys.stdout.write("DEBUG === sledovat:%s ===\n\n" % sledovat)
+      if (sledovat==True):
+        zakaznik.den_rtt = rtt_den
+        zakaznik.now_rtt = rtt_10m
+        L_elpr.append(zakaznik)
 
-  for zakaznik in L_elpr:
-    #print("DEBUG %s" % (zakaznik))
-    zakaznik.navrhni_shaping()
-    zakaznik.proved_shaping()
-    zakaznik.aktualizuj_udaje(cursor)
+    for zakaznik in L_elpr:
+      #print("DEBUG %s" % (zakaznik))
+      zakaznik.navrhni_shaping()
+      zakaznik.proved_shaping()
+      zakaznik.aktualizuj_udaje(cursor)
 
   conn.close()
