@@ -5,7 +5,7 @@
 Popis: Viz. usage()
 Autor: Jindrich Vrba
 Dne: 21.11.2o2o
-Posledni uprava: 17.12.2o2o
+Posledni uprava: 28.12.2o2o
 """
 
 #TODO jen bezdratove zakazniky
@@ -18,6 +18,11 @@ import dtb, ssh
 signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 signal.signal(signal.SIGINT, signal.SIG_DFL)
 
+#minimalni mozna priraditelna rychlost dle specifikace ISP
+# - dle CTU VO-S/1/08.2020-9 od 1.1.2021 bezne dostupna rychlost je minimalne 60% inzerovane rychlosti
+#toto nastaveni nema vliv na garantovanou rychlost uzivatele, ktera ma vzdy prednost
+#MIN_POMER=0.6 #vychozi hodnota = 60%
+MIN_POMER=0.6
 
 class Zamek:
   """Zamykani - zajisteni samostatneho pristupu.
@@ -51,9 +56,9 @@ class Zakaznik:
     #maximalni rychlosti
     self.max_down = row[2]
     self.max_up = row[3]
-    #garantovane rychlosti - z databaze, ale ne nize nez 50% max rychlosti
-    self.garant_down = max(row[0],int(self.max_down/2))
-    self.garant_up   = max(row[1],int(self.max_up/2))
+    #garantovane rychlosti - z databaze, ale ne nize nez MIN_POMER z max rychlosti
+    self.garant_down = max(row[0],int(self.max_down*MIN_POMER))
+    self.garant_up   = max(row[1],int(self.max_up*MIN_POMER))
     #aktualni rychlosti, bud jiz evidovane u rizenych zakazniku nebo maximalni rychlosti
     cursor.execute("""
       select down, up
@@ -116,11 +121,11 @@ class Zakaznik:
       return
     print("TODO zmenit rychlost na down:%d, up:%d" % (self.new_down, self.new_up))
 
-    prikaz="""/opt/shaper/add.py change {self.cislo_smlouvy} {self.garant_down} {self.garant_up} {self.new_down} 0 {self.new_up} 0 0 generuj test_vyvoj_eliminace_pretizeni""".format(self=self)
+    prikaz="""/opt/shaper/add.py change {self.cislo_smlouvy} {self.garant_down} {self.garant_up} {self.new_down} 0 {self.new_up} 0 0 web test_vyvoj_eliminace_pretizeni""".format(self=self)
     print("TODO prikaz:%s" % prikaz)
 
-    #errcode = ssh.command("shaper",prikaz)
-    #print(errcode)
+    errcode = ssh.command("shaper",prikaz)
+    print(errcode)
 
 
   def aktualizuj_udaje(self, cursor):
@@ -264,7 +269,7 @@ def overit(cursor, cislo_smlouvy):
   down,up=rrd_stat(cursor,cislo_smlouvy)
   #sys.stderr.write("DEBUG poslednich 10m: down=%d, up=%d [kbit]\n" % (down,up))
   #TODO doladit vychozi hodnotu garantovane rychlosti
-  cursor.execute("select CAST(greatest(garant_down,max_down/2) AS UNSIGNED),CAST(greatest(garant_up,max_up/2) AS UNSIGNED),max_down,max_up from zakaznici where cislo_smlouvy=%d" % (cislo_smlouvy))
+  cursor.execute("select CAST(greatest(garant_down,max_down*%f) AS UNSIGNED),CAST(greatest(garant_up,max_up*%f) AS UNSIGNED),max_down,max_up from zakaznici where cislo_smlouvy=%d" % (MIN_POMER,MIN_POMER,cislo_smlouvy))
   row=cursor.fetchone()
   #sys.stderr.write("DEBUG sluzba g_d, g_u, d, u [kbit]: %s\n" % str(row))
   g_d, g_u, d, u = row
