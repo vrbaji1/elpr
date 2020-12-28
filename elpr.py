@@ -22,7 +22,7 @@ signal.signal(signal.SIGINT, signal.SIG_DFL)
 # - dle CTU VO-S/1/08.2020-9 od 1.1.2021 bezne dostupna rychlost je minimalne 60% inzerovane rychlosti
 #toto nastaveni nema vliv na garantovanou rychlost uzivatele, ktera ma vzdy prednost
 #MIN_POMER=0.6 #vychozi hodnota = 60%
-MIN_POMER=0.6
+MIN_POMER=0.3
 
 class Zamek:
   """Zamykani - zajisteni samostatneho pristupu.
@@ -97,18 +97,34 @@ class Zakaznik:
     print("DEBUG %s" % (self))
 
 
-  #TODO
   def navrhni_shaping(self):
     """ Navrhne vhodnou upravu shapingu.
     """
     print("\nDEBUG %s" % (self))
-    print("DEBUG pomer zhorseni rtt %.2f" % (self.now_rtt/self.den_rtt))
-    #TODO doladit pomer snizeni
-    #TODO nemelo by se brat jeste v potaz max(?15?,self.den_rtt) ?
-    snizit=self.now_rtt/self.den_rtt/3
-    print("DEBUG pomer snizeni shapingu %.2f" % (snizit))
-    self.new_down=int(max(self.garant_down, self.now_down/snizit))
-    self.new_up=int(max(self.garant_up, self.now_up/snizit))
+    pomer_zhorseni=self.now_rtt/self.den_rtt
+    print("DEBUG pomer zhorseni rtt %.2f" % (pomer_zhorseni))
+
+    #snizit rychlost
+    if (pomer_zhorseni>3.0):
+      #TODO doladit pomer snizeni
+      #TODO nemelo by se brat jeste v potaz max(?15?,self.den_rtt) ?
+      snizit=pomer_zhorseni/3
+      print("DEBUG pomer snizeni shapingu %.2f" % (snizit))
+      self.new_down=int(max(self.garant_down, self.now_down/snizit))
+      self.new_up=int(max(self.garant_up, self.now_up/snizit))
+    #potrebujeme relativne velke rozmezi, kde rychlost nemenime, kvuli optimalizaci
+    elif (1.5<pomer_zhorseni<=3.0):
+      self.new_down=self.now_down
+      self.new_up=self.now_up
+    #zvysit rychlost
+    elif (pomer_zhorseni<=1.5):
+      zvysit=1/(pomer_zhorseni/1.5)
+      print("DEBUG pomer zvyseni shapingu %.2f" % (zvysit))
+      self.new_down=int(min(self.max_down, self.now_down*zvysit))
+      self.new_up=int(min(self.max_up, self.now_up*zvysit))
+    else:
+      raise RuntimeError("ERROR neni pokryta situace pro pomer_zhorseni %.2f" % (pomer_zhorseni))
+
     print("DEBUG %s" % (self))
 
 
@@ -135,7 +151,7 @@ class Zakaznik:
     if (self.new_down==self.now_down and self.new_up==self.now_up):
       return
 
-    #pokud jsou rychlosti aktualizovany na maximalni rychlosti, neprovadime rizeni a tedy mazeme z evidence
+    #pokud jsou rychlosti aktualizovany na maximalni rychlosti, prestavame evidovat
     if (self.new_down==self.max_down and self.new_up==self.max_up):
       print("DEBUG delete from elpr where cislo_smlouvy={self.cislo_smlouvy:d}".format(self=self))
       cursor.execute("delete from elpr where cislo_smlouvy={self.cislo_smlouvy:d}".format(self=self))
@@ -200,7 +216,7 @@ def rrd_stat(cursor,cislo_smlouvy):
     #sys.stderr.write("DEBUG %s\n" % ip)
     if os.path.isfile("/raid/ipac/rrd_real/host-%s.rrd" % ip):
       try:
-        temp=rrdtool.graph('temp.png','-s','now-10m','-e','now',
+        temp=rrdtool.graph('temp.png','-s','now-600s','-e','now',
           'DEF:down=/raid/ipac/rrd_real/host-%s.rrd:down:AVERAGE' % ip,
           'CDEF:d_kbit=down,125,/',
           'PRINT:d_kbit:AVERAGE:%.0lf',
