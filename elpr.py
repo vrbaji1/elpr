@@ -20,6 +20,7 @@ signal.signal(signal.SIGINT, signal.SIG_DFL)
 
 #minimalni mozna priraditelna rychlost dle specifikace ISP
 # - dle CTU VO-S/1/08.2020-9 od 1.1.2021 bezne dostupna rychlost je minimalne 60% inzerovane rychlosti
+#                                        minimalni rychlost je minimalne 30% inzerovane rychlosti
 #toto nastaveni nema vliv na garantovanou rychlost uzivatele, ktera ma vzdy prednost
 #MIN_POMER=0.6 #vychozi hodnota = 60%
 MIN_POMER=0.3
@@ -93,11 +94,11 @@ class Zakaznik:
 
     #vyuziti garantovane rychlosti
     down,up=rrd_stat(cursor,cislo_smlouvy)
-    sys.stderr.write("DEBUG poslednich 10m: down=%d, up=%d [kbit]\n" % (down,up))
-    sys.stderr.write("DEBUG vyuzito %.2f%% z garant_down\n" % ( 100.0*down/self.garant_down ))
-    sys.stderr.write("DEBUG vyuzito %.2f%% z garant_up\n" % ( 100.0*up/self.garant_up ))
+    #sys.stderr.write("DEBUG poslednich 10m: down=%d, up=%d [kbit]\n" % (down,up))
+    #sys.stderr.write("DEBUG vyuzito %.2f%% z garant_down\n" % ( 100.0*down/self.garant_down ))
+    #sys.stderr.write("DEBUG vyuzito %.2f%% z garant_up\n" % ( 100.0*up/self.garant_up ))
     self.vyuziti_procent_garant=int(max(100.0*down/self.garant_down,100.0*up/self.garant_up))
-    sys.stderr.write("DEBUG vyuziti_procent_garant=%d\n" % self.vyuziti_procent_garant)
+    #sys.stderr.write("DEBUG vyuziti_procent_garant=%d\n" % self.vyuziti_procent_garant)
 
     ### nove nastavene rychlosti shapingem - o nich se musi teprve rozhodnout
     self.new_down = None
@@ -128,10 +129,10 @@ class Zakaznik:
     print("DEBUG pomer zhorseni rtt %.2f" % (pomer_zhorseni))
 
     #snizit rychlost
-    if (pomer_zhorseni>3.0):
+    if (pomer_zhorseni>2.5):
       #TODO nemelo by se brat jeste v potaz max(?15?,self.den_rtt) ?
       #nesnizovat o vice nez 40%
-      snizit=min(0.4, (pomer_zhorseni/3-1)/3)
+      snizit=min(0.4, (pomer_zhorseni/2.5-1)/3)
       print("DEBUG pomer snizeni shapingu -%.2f" % (snizit))
       #snizovani o male procento je zbytecna zatez
       if (snizit<0.05):
@@ -139,7 +140,7 @@ class Zakaznik:
       self.new_down=int(max(self.garant_down, self.now_down*(1-snizit)))
       self.new_up=int(max(self.garant_up, self.now_up*(1-snizit)))
     #potrebujeme relativne velke rozmezi, kde rychlost nemenime, kvuli optimalizaci
-    elif (1.2<pomer_zhorseni<=3.0):
+    elif (1.2<pomer_zhorseni<=2.5):
       self.new_down=self.now_down
       self.new_up=self.now_up
     #zvysit rychlost
@@ -428,7 +429,7 @@ if __name__ == "__main__":
         left JOIN tarif T ON Z.id_tarifu=T.id
         left JOIN tarif_skupina TS ON T.id_skupina=TS.id
       where Z.odpojen=0 AND Z.max_down!=0
-        AND ZS.10m_rtt>3*ZS.den_rtt AND ZS.10m_rtt>15
+        AND ZS.10m_rtt>2.5*ZS.den_rtt AND ZS.10m_rtt>15
         AND TS.nazev not like "%optika%"
         AND Z.cislo_smlouvy not in (select cislo_smlouvy from elpr)
       """)
