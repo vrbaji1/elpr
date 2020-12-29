@@ -91,6 +91,14 @@ class Zakaznik:
       #doplnit nejakou potrebnou hodnotu, at muze system postupne opustit
       self.now_stdev=0.1
 
+    #vyuziti garantovane rychlosti
+    down,up=rrd_stat(cursor,cislo_smlouvy)
+    sys.stderr.write("DEBUG poslednich 10m: down=%d, up=%d [kbit]\n" % (down,up))
+    sys.stderr.write("DEBUG vyuzito %.2f%% z garant_down\n" % ( 100.0*down/self.garant_down ))
+    sys.stderr.write("DEBUG vyuzito %.2f%% z garant_up\n" % ( 100.0*up/self.garant_up ))
+    self.vyuziti_procent_garant=int(max(100.0*down/self.garant_down,100.0*up/self.garant_up))
+    sys.stderr.write("DEBUG vyuziti_procent_garant=%d\n" % self.vyuziti_procent_garant)
+
     ### nove nastavene rychlosti shapingem - o nich se musi teprve rozhodnout
     self.new_down = None
     self.new_up = None
@@ -99,45 +107,55 @@ class Zakaznik:
   def navrhni_max_rychlosti(self):
     """ Jako nove rychlosti pripravi maximalni rychlosti zakaznika.
     """
-    print("\nDEBUG %s" % (self))
+    #print("\nDEBUG %s" % (self))
     self.new_down = self.max_down
     self.new_up   = self.max_up
-    print("DEBUG %s" % (self))
+    #print("DEBUG %s" % (self))
 
 
   def navrhni_shaping(self):
     """ Navrhne vhodnou upravu shapingu.
     """
-    print("\nDEBUG %s" % (self))
+    sys.stderr.write("DEBUG vyuziti_procent_garant=%d\n" % self.vyuziti_procent_garant)
+    #zakaznik uz neprenasi takove mnozstvi dat, aby melo smysl ridit shaping
+    #TODO procentuelne ok?
+    if (self.vyuziti_procent_garant<30):
+      self.navrhni_max_rychlosti()
+      return
+
+    #print("\nDEBUG %s" % (self))
     pomer_zhorseni=self.now_rtt/self.den_rtt
     print("DEBUG pomer zhorseni rtt %.2f" % (pomer_zhorseni))
 
     #snizit rychlost
     if (pomer_zhorseni>3.0):
-      #TODO doladit pomer snizeni
       #TODO nemelo by se brat jeste v potaz max(?15?,self.den_rtt) ?
-      #snizit=pomer_zhorseni/3
-      #nesnizovat o vice nez 30%
-      snizit=min(0.3, (pomer_zhorseni/3-1)/3)
+      #nesnizovat o vice nez 40%
+      snizit=min(0.4, (pomer_zhorseni/3-1)/3)
       print("DEBUG pomer snizeni shapingu -%.2f" % (snizit))
+      #snizovani o male procento je zbytecna zatez
+      if (snizit<0.05):
+        snizit=0.05
       self.new_down=int(max(self.garant_down, self.now_down*(1-snizit)))
       self.new_up=int(max(self.garant_up, self.now_up*(1-snizit)))
     #potrebujeme relativne velke rozmezi, kde rychlost nemenime, kvuli optimalizaci
-    elif (1.5<pomer_zhorseni<=3.0):
+    elif (1.2<pomer_zhorseni<=3.0):
       self.new_down=self.now_down
       self.new_up=self.now_up
     #zvysit rychlost
-    elif (pomer_zhorseni<=1.5):
-      #zvysit=1/(pomer_zhorseni/1.5)
-      #nezvysovat o vice nez 30%
-      zvysit=min(0.3,(1/(pomer_zhorseni/1.5)-1)/3)
+    elif (pomer_zhorseni<=1.2):
+      #nezvysovat o vice nez 20%
+      zvysit=min(0.2,(1/(pomer_zhorseni/1.2)-1)/3)
       print("DEBUG pomer zvyseni shapingu +%.2f" % (zvysit))
+      #zvysovani o male procento je zbytecna zatez
+      if (zvysit<0.05):
+        zvysit=0.0
       self.new_down=int(min(self.max_down, self.now_down*(1+zvysit)))
       self.new_up=int(min(self.max_up, self.now_up*(1+zvysit)))
     else:
       raise RuntimeError("ERROR neni pokryta situace pro pomer_zhorseni %.2f" % (pomer_zhorseni))
 
-    print("DEBUG %s" % (self))
+    #print("DEBUG %s" % (self))
 
 
   #TODO
@@ -402,13 +420,17 @@ if __name__ == "__main__":
   else: #operace "on"
     #vycist nove pripady k eliminaci pretizeni
     #TODO zatim zkusebni hodnoty, upravuji jak se mi to hodi pro testovani
-    #TODO 10m_rtt je mozna 1h_rtt
     #vycist zakazniky s prekrocenymi meznimi hodnotami, vynechat jiz rizene
     cursor.execute("""
       select Z.cislo_smlouvy,ZS.10m_rtt,ZS.den_rtt
-      from zakaznici_statistiky ZS JOIN zakaznici Z ON ZS.cislo_smlouvy=Z.cislo_smlouvy
-      where Z.odpojen=0 AND ZS.10m_rtt>5*ZS.den_rtt AND ZS.10m_rtt>15 AND Z.max_down!=0
-            AND Z.cislo_smlouvy not in (select cislo_smlouvy from elpr)
+      from zakaznici_statistiky ZS
+        JOIN zakaznici Z ON ZS.cislo_smlouvy=Z.cislo_smlouvy
+        left JOIN tarif T ON Z.id_tarifu=T.id
+        left JOIN tarif_skupina TS ON T.id_skupina=TS.id
+      where Z.odpojen=0 AND Z.max_down!=0
+        AND ZS.10m_rtt>3*ZS.den_rtt AND ZS.10m_rtt>15
+        AND TS.nazev not like "%optika%"
+        AND Z.cislo_smlouvy not in (select cislo_smlouvy from elpr)
       """)
     rows=cursor.fetchall()
     for cislo_smlouvy,rtt_10m,rtt_den in rows:
@@ -421,8 +443,9 @@ if __name__ == "__main__":
         L_elpr.append(zakaznik)
 
     for zakaznik in L_elpr:
-      #print("DEBUG %s" % (zakaznik))
+      print("\nDEBUG %s" % (zakaznik))
       zakaznik.navrhni_shaping()
+      print("DEBUG %s" % (zakaznik))
       zakaznik.proved_shaping()
       zakaznik.aktualizuj_udaje(cursor)
 
