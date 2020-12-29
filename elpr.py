@@ -39,7 +39,6 @@ class Zamek:
     return True
 
 
-#TODO doplnit
 class Zakaznik:
   """ Trida zakaznika
   """
@@ -105,6 +104,28 @@ class Zakaznik:
     self.new_up = None
 
 
+  def over_vhodnost_rizeni(self):
+    """ Overi, jestli dany zakaznik je vhodny k aplikaci rizeneho shapingu.
+    Urceno pro zakazniky vstupujici do rizeni.
+    @return: True / False
+    """
+    ### TODO pokud je g_u=u a g_d=d nema smysl shapovat - mozna uz v SQL dotazu
+
+    #pokud zakaznik nevyuziva alespon svoji garantovanou rychlost, neni co shapovat
+    sys.stdout.write("DEBUG vyuzito %d%% garantovane rychlosti\n" % self.vyuziti_procent_garant)
+    if (self.vyuziti_procent_garant<100):
+      return False
+
+    #odezva by mela kolisat, jinak by se mohlo jednat o false positive kvuli prepojeni zakaznika
+    #pripadne jednorazova odchylka v odezve
+    sys.stdout.write("DEBUG stdev %.1f\n" % self.now_stdev)
+    if (self.now_stdev<6):
+      return False
+
+    #pokud proslo vsemi kontrolami, je vhodne k rizenemu shapingu
+    return True
+
+
   def navrhni_max_rychlosti(self):
     """ Jako nove rychlosti pripravi maximalni rychlosti zakaznika.
     """
@@ -159,18 +180,19 @@ class Zakaznik:
     #print("DEBUG %s" % (self))
 
 
-  #TODO
   def proved_shaping(self):
     """ Realizuje shaping.
     """
     #pokud se nic nezmenilo, neni co spoustet
     if (self.now_down==self.new_down and self.now_up==self.new_up):
       return
+
     print("TODO zmenit rychlost na down:%d, up:%d" % (self.new_down, self.new_up))
 
     prikaz="""/opt/shaper/add.py change {self.cislo_smlouvy} {self.garant_down} {self.garant_up} {self.new_down} 0 {self.new_up} 0 0 web test_vyvoj_eliminace_pretizeni""".format(self=self)
     print("DEBUG prikaz:%s" % prikaz)
 
+    #TODO
     errcode = ssh.command("shaper",prikaz)
     print("DEBUG chybovy kod: %d" % errcode)
 
@@ -304,63 +326,16 @@ def get_rtt_stdev(cursor,cislo_smlouvy):
     return float(stdev)
 
 
-def overit(cursor, cislo_smlouvy):
-  """ Overi, jestli dany zakaznik je vhodny k aplikaci rizeneho shapingu.
-  TODO
-  @param cursor: databazovy kurzor
-  @return: (True, Zakaznik) / (False, None)
-  """
-  #sys.stdout.write("DEBUG %d\n" % (cislo_smlouvy))
-
-  ### TODO pokud je g_u=u a g_d=d nema smysl shapovat - mozna uz v SQL dotazu
-
-  ### pokud zakaznik nevyuziva alespon svoji garantovanou rychlost, neni co shapovat
-  down,up=rrd_stat(cursor,cislo_smlouvy)
-  #sys.stderr.write("DEBUG poslednich 10m: down=%d, up=%d [kbit]\n" % (down,up))
-  #TODO doladit vychozi hodnotu garantovane rychlosti
-  cursor.execute("select CAST(greatest(garant_down,max_down*%f) AS UNSIGNED),CAST(greatest(garant_up,max_up*%f) AS UNSIGNED),max_down,max_up from zakaznici where cislo_smlouvy=%d" % (MIN_POMER,MIN_POMER,cislo_smlouvy))
-  row=cursor.fetchone()
-  #sys.stderr.write("DEBUG sluzba g_d, g_u, d, u [kbit]: %s\n" % str(row))
-  g_d, g_u, d, u = row
-  sys.stderr.write("DEBUG vyuzito %.2f%% z garant_down\n" % ( 100.0*down/g_d ))
-  sys.stderr.write("DEBUG vyuzito %.2f%% z garant_up\n" % ( 100.0*up/g_u ))
-  #sys.stderr.write("DEBUG vyuzito %.2f%% z max_down\n" % ( 100.0*down/d ))
-  #sys.stderr.write("DEBUG vyuzito %.2f%% z max_up\n" % ( 100.0*up/u ))
-  vyuziti_procent_garant=int(max(100.0*down/g_d,100.0*up/g_u))
-  #sys.stderr.write("DEBUG vyuziti_procent_garant=%d\n" % vyuziti_procent_garant)
-  if (vyuziti_procent_garant<100):
-    return (False, None)
-
-  ### odezva by mela kolisat, jinak by se mohlo jednat o false positive kvuli prepojeni zakaznika
-  stdev=get_rtt_stdev(cursor,cislo_smlouvy) #v ms
-  sys.stderr.write("DEBUG stdev %.1f\n" % stdev)
-  #TODO doladit presnou hodnotu
-  if (stdev<10):
-    return (False, None)
-
-  #pokud proslo vsemi kontrolami, je vhodne k rizenemu shapingu
-  z = Zakaznik(cislo_smlouvy)
-  z.now_stdev = stdev
-  z.garant_down = g_d
-  z.garant_up = g_u
-  z.now_down = d
-  z.now_up = u
-  return (True, z)
-
-
 def get_evidovani_elpr(cursor):
   """ Vrati seznam zakazniku, kteri jsou jiz rizeni pomoci eliminace pretizeni.
   @param cursor: databazovy kurzor
   @return: L
   """
   L = []
-  cursor.execute("select cislo_smlouvy,down,up from elpr")
+  cursor.execute("select cislo_smlouvy from elpr")
   rows=cursor.fetchall()
-  for cislo_smlouvy,down,up in rows:
-    z = Zakaznik(cislo_smlouvy)
-    z.now_down = down
-    z.now_up = up
-    L.append(z)
+  for cislo_smlouvy, in rows:
+    L.append( Zakaznik(cislo_smlouvy) )
 
   return L
 
@@ -399,17 +374,6 @@ if __name__ == "__main__":
   conn = dtb.connect(charset="utf8", use_unicode=True)
   cursor = conn.cursor()
 
-  #TODO
-  #overit(cursor,110328)
-  #overit(cursor,)
-  #sys.exit()
-
-  #z = Zakaznik(150363)
-  #print("DEBUG %s" % (z))
-  #z.new_down="test"
-  #print("DEBUG %s" % (z))
-  #sys.exit()
-
   #seznam jiz evidovanych
   L_elpr = get_evidovani_elpr(cursor)
 
@@ -420,7 +384,6 @@ if __name__ == "__main__":
       zakaznik.aktualizuj_udaje(cursor)
   else: #operace "on"
     #vycist nove pripady k eliminaci pretizeni
-    #TODO zatim zkusebni hodnoty, upravuji jak se mi to hodi pro testovani
     #vycist zakazniky s prekrocenymi meznimi hodnotami, vynechat jiz rizene
     cursor.execute("""
       select Z.cislo_smlouvy,ZS.10m_rtt,ZS.den_rtt
@@ -436,12 +399,13 @@ if __name__ == "__main__":
     rows=cursor.fetchall()
     for cislo_smlouvy,rtt_10m,rtt_den in rows:
       sys.stdout.write("DEBUG %10d: 10m_rtt=%d, den:rtt=%d\n" % (cislo_smlouvy,rtt_10m,rtt_den))
-      sledovat,zakaznik=overit(cursor,cislo_smlouvy)
+      zakaznik=Zakaznik(cislo_smlouvy)
+      sledovat=zakaznik.over_vhodnost_rizeni()
       sys.stdout.write("DEBUG === sledovat:%s ===\n\n" % sledovat)
       if (sledovat==True):
-        zakaznik.den_rtt = rtt_den
-        zakaznik.now_rtt = rtt_10m
         L_elpr.append(zakaznik)
+      else:
+        del zakaznik
 
     for zakaznik in L_elpr:
       print("\nDEBUG %s" % (zakaznik))
