@@ -5,7 +5,7 @@
 Popis: Viz. usage()
 Autor: Jindrich Vrba
 Dne: 21.11.2o2o
-Posledni uprava: 28.12.2o2o
+Posledni uprava: 29.12.2o2o
 """
 
 #TODO jen bezdratove zakazniky
@@ -79,9 +79,17 @@ class Zakaznik:
       """ % self.cislo_smlouvy)
     row = cursor.fetchone()
     self.now_rtt = row[0]
+    if (self.now_rtt==None):
+      sys.stderr.write("WARNING zakaznik %d nema statistiky now_rtt\n" % self.cislo_smlouvy)
+      #doplnit nejakou potrebnou hodnotu, at muze system postupne opustit
+      self.now_rtt=1.0
     self.den_rtt = row[1]
     #smerodatna odchylka z rrd databaze
     self.now_stdev = get_rtt_stdev(cursor, self.cislo_smlouvy) #v ms
+    if (self.now_stdev==None):
+      sys.stderr.write("WARNING zakaznik %d nema statistiky now_stdev\n" % self.cislo_smlouvy)
+      #doplnit nejakou potrebnou hodnotu, at muze system postupne opustit
+      self.now_stdev=0.1
 
     ### nove nastavene rychlosti shapingem - o nich se musi teprve rozhodnout
     self.new_down = None
@@ -108,20 +116,24 @@ class Zakaznik:
     if (pomer_zhorseni>3.0):
       #TODO doladit pomer snizeni
       #TODO nemelo by se brat jeste v potaz max(?15?,self.den_rtt) ?
-      snizit=pomer_zhorseni/3
-      print("DEBUG pomer snizeni shapingu %.2f" % (snizit))
-      self.new_down=int(max(self.garant_down, self.now_down/snizit))
-      self.new_up=int(max(self.garant_up, self.now_up/snizit))
+      #snizit=pomer_zhorseni/3
+      #nesnizovat o vice nez 30%
+      snizit=min(0.3, (pomer_zhorseni/3-1)/3)
+      print("DEBUG pomer snizeni shapingu -%.2f" % (snizit))
+      self.new_down=int(max(self.garant_down, self.now_down*(1-snizit)))
+      self.new_up=int(max(self.garant_up, self.now_up*(1-snizit)))
     #potrebujeme relativne velke rozmezi, kde rychlost nemenime, kvuli optimalizaci
     elif (1.5<pomer_zhorseni<=3.0):
       self.new_down=self.now_down
       self.new_up=self.now_up
     #zvysit rychlost
     elif (pomer_zhorseni<=1.5):
-      zvysit=1/(pomer_zhorseni/1.5)
-      print("DEBUG pomer zvyseni shapingu %.2f" % (zvysit))
-      self.new_down=int(min(self.max_down, self.now_down*zvysit))
-      self.new_up=int(min(self.max_up, self.now_up*zvysit))
+      #zvysit=1/(pomer_zhorseni/1.5)
+      #nezvysovat o vice nez 30%
+      zvysit=min(0.3,(1/(pomer_zhorseni/1.5)-1)/3)
+      print("DEBUG pomer zvyseni shapingu +%.2f" % (zvysit))
+      self.new_down=int(min(self.max_down, self.now_down*(1+zvysit)))
+      self.new_up=int(min(self.max_up, self.now_up*(1+zvysit)))
     else:
       raise RuntimeError("ERROR neni pokryta situace pro pomer_zhorseni %.2f" % (pomer_zhorseni))
 
@@ -138,10 +150,10 @@ class Zakaznik:
     print("TODO zmenit rychlost na down:%d, up:%d" % (self.new_down, self.new_up))
 
     prikaz="""/opt/shaper/add.py change {self.cislo_smlouvy} {self.garant_down} {self.garant_up} {self.new_down} 0 {self.new_up} 0 0 web test_vyvoj_eliminace_pretizeni""".format(self=self)
-    print("TODO prikaz:%s" % prikaz)
+    print("DEBUG prikaz:%s" % prikaz)
 
     errcode = ssh.command("shaper",prikaz)
-    print(errcode)
+    print("DEBUG chybovy kod: %d" % errcode)
 
 
   def aktualizuj_udaje(self, cursor):
@@ -156,8 +168,10 @@ class Zakaznik:
       print("DEBUG delete from elpr where cislo_smlouvy={self.cislo_smlouvy:d}".format(self=self))
       cursor.execute("delete from elpr where cislo_smlouvy={self.cislo_smlouvy:d}".format(self=self))
     else:
-      print("DEBUG replace into elpr (cislo_smlouvy, down, up) VALUES ({self.cislo_smlouvy:d}, {self.new_down:d}, {self.new_up:d})".format(self=self))
-      cursor.execute("replace into elpr (cislo_smlouvy, down, up) VALUES ({self.cislo_smlouvy:d}, {self.new_down:d}, {self.new_up:d})".format(self=self))
+      #print("DEBUG replace into elpr (cislo_smlouvy, down, up) VALUES ({self.cislo_smlouvy:d}, {self.new_down:d}, {self.new_up:d})".format(self=self))
+      #cursor.execute("replace into elpr (cislo_smlouvy, down, up) VALUES ({self.cislo_smlouvy:d}, {self.new_down:d}, {self.new_up:d})".format(self=self))
+      print("INSERT INTO elpr (cislo_smlouvy, down, up) VALUES ({self.cislo_smlouvy:d}, {self.new_down:d}, {self.new_up:d}) ON DUPLICATE KEY UPDATE down={self.new_down:d}, up={self.new_up:d}, uprav=uprav+1".format(self=self))
+      cursor.execute("INSERT INTO elpr (cislo_smlouvy, down, up) VALUES ({self.cislo_smlouvy:d}, {self.new_down:d}, {self.new_up:d}) ON DUPLICATE KEY UPDATE down={self.new_down:d}, up={self.new_up:d}, uprav=uprav+1".format(self=self))
 
 
   def __str__(self):
@@ -393,7 +407,7 @@ if __name__ == "__main__":
     cursor.execute("""
       select Z.cislo_smlouvy,ZS.10m_rtt,ZS.den_rtt
       from zakaznici_statistiky ZS JOIN zakaznici Z ON ZS.cislo_smlouvy=Z.cislo_smlouvy
-      where Z.odpojen=0 AND ZS.10m_rtt>5*ZS.den_rtt AND ZS.10m_rtt>15
+      where Z.odpojen=0 AND ZS.10m_rtt>5*ZS.den_rtt AND ZS.10m_rtt>15 AND Z.max_down!=0
             AND Z.cislo_smlouvy not in (select cislo_smlouvy from elpr)
       """)
     rows=cursor.fetchall()
