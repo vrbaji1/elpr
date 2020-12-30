@@ -5,7 +5,7 @@
 Popis: Viz. usage()
 Autor: Jindrich Vrba
 Dne: 21.11.2o2o
-Posledni uprava: 29.12.2o2o
+Posledni uprava: 3o.12.2o2o
 """
 
 import sys, getpass, getopt, signal, fcntl, os, rrdtool
@@ -85,7 +85,8 @@ class Zakaznik:
     if (self.den_rtt==None):
       self.den_rtt=tyden_rtt
     elif (self.den_rtt>15.0):
-      sys.stderr.write("WARNING Z %d extremni denni_rtt=%d (tydenni_rtt=%d)\n" % (self.cislo_smlouvy,self.den_rtt,tyden_rtt))
+      sys.stderr.write("WARNING zakaznik %d extremni denni_rtt=%d (tydenni_rtt=%d)\n"
+        % (self.cislo_smlouvy,self.den_rtt,tyden_rtt))
       self.den_rtt=min(self.den_rtt, tyden_rtt)
     #smerodatna odchylka z rrd databaze
     self.now_stdev = get_rtt_stdev(cursor, self.cislo_smlouvy) #v ms
@@ -148,6 +149,9 @@ class Zakaznik:
       self.navrhni_max_rychlosti()
       return
 
+    #TODO zde by chtelo tez osetrit, pokud stdev_now nekolisa, ze by se mohlo jednat o prepojeni na zalohu,
+    #     asi zvysit rychlost o povolene max, tato detekce neni uplne jista, aby stalo za to navysit na max
+
     #print("\nDEBUG %s" % (self))
     pomer_zhorseni=self.now_rtt/self.den_rtt
     print("DEBUG pomer zhorseni rtt %.2f" % (pomer_zhorseni))
@@ -209,6 +213,7 @@ class Zakaznik:
 
     #pokud jsou rychlosti aktualizovany na maximalni rychlosti, prestavame evidovat
     if (self.new_down==self.max_down and self.new_up==self.max_up):
+      self.print_vystupni_statistika()
       print("DEBUG delete from elpr where cislo_smlouvy={self.cislo_smlouvy:d}".format(self=self))
       cursor.execute("delete from elpr where cislo_smlouvy={self.cislo_smlouvy:d}".format(self=self))
     else:
@@ -216,6 +221,13 @@ class Zakaznik:
       #cursor.execute("replace into elpr (cislo_smlouvy, down, up) VALUES ({self.cislo_smlouvy:d}, {self.new_down:d}, {self.new_up:d})".format(self=self))
       print("INSERT INTO elpr (cislo_smlouvy, down, up) VALUES ({self.cislo_smlouvy:d}, {self.new_down:d}, {self.new_up:d}) ON DUPLICATE KEY UPDATE down={self.new_down:d}, up={self.new_up:d}, uprav=uprav+1".format(self=self))
       cursor.execute("INSERT INTO elpr (cislo_smlouvy, down, up) VALUES ({self.cislo_smlouvy:d}, {self.new_down:d}, {self.new_up:d}) ON DUPLICATE KEY UPDATE down={self.new_down:d}, up={self.new_up:d}, uprav=uprav+1".format(self=self))
+
+
+  def print_vystupni_statistika(self):
+    cursor.execute("select TIMEDIFF(NOW(),vznik),uprav from elpr WHERE cislo_smlouvy=%d" % self.cislo_smlouvy)
+    cas,uprav=cursor.fetchone()
+    sys.stdout.write("INFO Zakaznik %d opousti rizeni po stravenem case %s a %d upravach rizeni.\n"
+       % (self.cislo_smlouvy, cas, uprav))
 
 
   def __str__(self):
@@ -416,5 +428,7 @@ if __name__ == "__main__":
       print("DEBUG %s" % (zakaznik))
       zakaznik.proved_shaping()
       zakaznik.aktualizuj_udaje(cursor)
+      #TODO zde by se mohlo kontrolovat, jestli nejaky zakaznik neni rizen dlouhodobe na minimalni hodnotu a tedy nemusi
+      #     byt pomoci rizeneho shapingu resitelny, pripadne je na servisni zasah nebo zmenu tarifu
 
   conn.close()
