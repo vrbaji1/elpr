@@ -5,7 +5,7 @@
 Popis: Viz. usage()
 Autor: Jindrich Vrba
 Dne: 28.12.2o2o
-Posledni uprava:
+Posledni uprava: 3o.12.2o2o
 """
 
 import sys, getpass, getopt, signal, os, rrdtool
@@ -38,11 +38,17 @@ def vytvor_rrd(cislo_smlouvy):
   #--step ... predpokladany cas mezi plnenim databaze
   #Data Sources - DS:nazev:typ:max_cas_mezi_updaty:min_hodnota:max_hodnota
   #Round Robin Archive - RRA:vypocet:pomer_neznamych_dat:pocet_zakladnich_jednotek:polozek_v_archivu
-  #Archivy: 1 den s presnosti 5 min, 1 tyden s presnosti 15 min, 1 mesic s presnosti 60 min, 1 rok s presnosti 24 hod
+  #Archivy: 1 den s presnosti 2 min, 1 tyden s presnosti 14 min, 1 mesic s presnosti 60 min, 1 rok s presnosti 24 hod
   rrdtool.create("/raid/elpr/rrd_real/id-%s.rrd" % cislo_smlouvy,
-    "--step","300",
-    "DS:down:GAUGE:400:0:U","DS:up:GAUGE:400:0:U",
-    "RRA:AVERAGE:0.5:1:288","RRA:AVERAGE:0.5:7:672","RRA:AVERAGE:0.5:31:744","RRA:AVERAGE:0.5:365:365")
+    "--step","120",
+    "DS:down:GAUGE:160:0:U","DS:up:GAUGE:160:0:U",
+    "RRA:AVERAGE:0.5:1:720","RRA:AVERAGE:0.5:7:720","RRA:AVERAGE:0.5:30:744","RRA:AVERAGE:0.5:720:365")
+  ##TODO elpr se momentalne spousti kazdych 5min, ale potrebuji presnejsi statistiky, kdy opravdu ke zmene doslo
+  ##     tedy zatim viz vyse kazde 2 minuty
+  ##Archivy: 1 den s presnosti 5 min, 1 tyden s presnosti 15 min, 1 mesic s presnosti 60 min, 1 rok s presnosti 24 hod
+  #  "--step","300",
+  #  "DS:down:GAUGE:400:0:U","DS:up:GAUGE:400:0:U",
+  #  "RRA:AVERAGE:0.5:1:288","RRA:AVERAGE:0.5:7:672","RRA:AVERAGE:0.5:31:744","RRA:AVERAGE:0.5:365:365")
 
 
 def zapsat_statistiky(cursor):
