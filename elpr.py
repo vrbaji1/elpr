@@ -8,8 +8,6 @@ Dne: 21.11.2o2o
 Posledni uprava: 29.12.2o2o
 """
 
-#TODO jen bezdratove zakazniky
-
 import sys, getpass, getopt, signal, fcntl, os, rrdtool
 sys.path.append('/opt/lib')
 import dtb, ssh
@@ -23,7 +21,7 @@ signal.signal(signal.SIGINT, signal.SIG_DFL)
 #                                        minimalni rychlost je minimalne 30% inzerovane rychlosti
 #toto nastaveni nema vliv na garantovanou rychlost uzivatele, ktera ma vzdy prednost
 #MIN_POMER=0.6 #vychozi hodnota = 60%
-MIN_POMER=0.3
+MIN_POMER=0.6
 
 class Zamek:
   """Zamykani - zajisteni samostatneho pristupu.
@@ -39,6 +37,7 @@ class Zamek:
     return True
 
 
+#TODO prepsat dalsi funkce na metodu
 class Zakaznik:
   """ Trida zakaznika
   """
@@ -74,16 +73,20 @@ class Zakaznik:
 
     ### statistiky
     cursor.execute("""
-      select 10m_rtt, den_rtt
+      select 10m_rtt, den_rtt, tyden_rtt
       from zakaznici_statistiky where cislo_smlouvy=%d
       """ % self.cislo_smlouvy)
-    row = cursor.fetchone()
-    self.now_rtt = row[0]
+    self.now_rtt, self.den_rtt, tyden_rtt = cursor.fetchone()
     if (self.now_rtt==None):
       sys.stderr.write("WARNING zakaznik %d nema statistiky now_rtt\n" % self.cislo_smlouvy)
       #doplnit nejakou potrebnou hodnotu, at muze system postupne opustit
       self.now_rtt=1.0
-    self.den_rtt = row[1]
+    #pokud je denni rtt vychylene nebo neni, dosadit pripadne tydenni rtt
+    if (self.den_rtt==None):
+      self.den_rtt=tyden_rtt
+    elif (self.den_rtt>15.0):
+      sys.stderr.write("WARNING Z %d extremni denni_rtt=%d (tydenni_rtt=%d)\n" % (self.cislo_smlouvy,self.den_rtt,tyden_rtt))
+      self.den_rtt=min(self.den_rtt, tyden_rtt)
     #smerodatna odchylka z rrd databaze
     self.now_stdev = get_rtt_stdev(cursor, self.cislo_smlouvy) #v ms
     if (self.now_stdev==None):
@@ -386,19 +389,19 @@ if __name__ == "__main__":
     #vycist nove pripady k eliminaci pretizeni
     #vycist zakazniky s prekrocenymi meznimi hodnotami, vynechat jiz rizene
     cursor.execute("""
-      select Z.cislo_smlouvy,ZS.10m_rtt,ZS.den_rtt
+      select Z.cislo_smlouvy,ZS.10m_rtt,ZS.den_rtt,ZS.tyden_rtt
       from zakaznici_statistiky ZS
         JOIN zakaznici Z ON ZS.cislo_smlouvy=Z.cislo_smlouvy
         left JOIN tarif T ON Z.id_tarifu=T.id
         left JOIN tarif_skupina TS ON T.id_skupina=TS.id
       where Z.odpojen=0 AND Z.max_down!=0
-        AND ZS.10m_rtt>2.5*ZS.den_rtt AND ZS.10m_rtt>15
+        AND (ZS.10m_rtt>2.5*ZS.den_rtt OR ZS.10m_rtt>2.5*ZS.tyden_rtt) AND ZS.10m_rtt>15
         AND TS.nazev not like "%optika%"
         AND Z.cislo_smlouvy not in (select cislo_smlouvy from elpr)
       """)
     rows=cursor.fetchall()
-    for cislo_smlouvy,rtt_10m,rtt_den in rows:
-      sys.stdout.write("DEBUG %10d: 10m_rtt=%d, den:rtt=%d\n" % (cislo_smlouvy,rtt_10m,rtt_den))
+    for cislo_smlouvy,rtt_10m,rtt_den,rtt_tyden in rows:
+      sys.stdout.write("DEBUG %10d: 10m_rtt=%d, den_rtt=%d, tyden_rtt=%d\n" % (cislo_smlouvy,rtt_10m,rtt_den,rtt_tyden))
       zakaznik=Zakaznik(cislo_smlouvy)
       sledovat=zakaznik.over_vhodnost_rizeni()
       sys.stdout.write("DEBUG === sledovat:%s ===\n\n" % sledovat)
