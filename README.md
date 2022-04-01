@@ -39,4 +39,4 @@ stat.py ["-h"|"--help"]
 
 I tento skript se spouští pravidelně plánovačem Cron:
 
-```*/2     *       * * *   statistiky /opt/elpr/stat.py```
+```*/2     *       * * *    non-root-user /opt/elpr/stat.py```
