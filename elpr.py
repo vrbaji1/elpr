@@ -5,7 +5,7 @@
 Popis: Viz. usage()
 Autor: Jindrich Vrba
 Dne: 21.11.2o2o
-Posledni uprava: 3o.12.2o2o
+Posledni uprava: 27.4.2o22
 """
 
 import sys, getpass, getopt, signal, fcntl, os, rrdtool
@@ -37,7 +37,6 @@ class Zamek:
     return True
 
 
-#TODO prepsat dalsi funkce na metodu
 class Zakaznik:
   """ Trida zakaznika
   """
@@ -52,6 +51,7 @@ class Zakaznik:
       from zakaznici where cislo_smlouvy=%d
       """ % self.cislo_smlouvy)
     row=cursor.fetchone()
+    #print("DEBUG %d row: %s" % (self.cislo_smlouvy,str(row)))
     #maximalni rychlosti
     self.max_down = row[2]
     self.max_up = row[3]
@@ -113,7 +113,7 @@ class Zakaznik:
     Urceno pro zakazniky vstupujici do rizeni.
     @return: True / False
     """
-    ### TODO pokud je g_u=u a g_d=d nema smysl shapovat - mozna uz v SQL dotazu
+    #pokud je g_u=u a g_d=d nema smysl shapovat - mozna uz v SQL dotazu
 
     #pokud zakaznik nevyuziva alespon svoji garantovanou rychlost, neni co shapovat
     sys.stdout.write("DEBUG vyuzito %d%% garantovane rychlosti\n" % self.vyuziti_procent_garant)
@@ -144,13 +144,9 @@ class Zakaznik:
     """
     sys.stderr.write("DEBUG vyuziti_procent_garant=%d\n" % self.vyuziti_procent_garant)
     #zakaznik uz neprenasi takove mnozstvi dat, aby melo smysl ridit shaping
-    #TODO procentuelne ok?
     if (self.vyuziti_procent_garant<30):
       self.navrhni_max_rychlosti()
       return
-
-    #TODO zde by chtelo tez osetrit, pokud stdev_now nekolisa, ze by se mohlo jednat o prepojeni na zalohu,
-    #     asi zvysit rychlost o povolene max, tato detekce neni uplne jista, aby stalo za to navysit na max
 
     #print("\nDEBUG %s" % (self))
     pomer_zhorseni=self.now_rtt/self.den_rtt
@@ -158,7 +154,6 @@ class Zakaznik:
 
     #snizit rychlost
     if (pomer_zhorseni>2.5):
-      #TODO nemelo by se brat jeste v potaz max(?15?,self.den_rtt) ?
       #nesnizovat o vice nez 40%
       snizit=min(0.4, (pomer_zhorseni/2.5-1)/3)
       print("DEBUG pomer snizeni shapingu -%.2f" % (snizit))
@@ -184,8 +179,6 @@ class Zakaznik:
     else:
       raise RuntimeError("ERROR neni pokryta situace pro pomer_zhorseni %.2f" % (pomer_zhorseni))
 
-    #print("DEBUG %s" % (self))
-
 
   def proved_shaping(self):
     """ Realizuje shaping.
@@ -199,7 +192,6 @@ class Zakaznik:
     prikaz="""/opt/shaper/add.py change {self.cislo_smlouvy} {self.garant_down} {self.garant_up} {self.new_down} 0 {self.new_up} 0 0 web test_vyvoj_eliminace_pretizeni""".format(self=self)
     print("DEBUG prikaz:%s" % prikaz)
 
-    #TODO
     errcode = ssh.command("shaper",prikaz)
     print("DEBUG chybovy kod: %d" % errcode)
 
@@ -277,7 +269,6 @@ def rrd_stat(cursor,cislo_smlouvy):
   soucet_down=0
   soucet_up=0
 
-  #TODO IPv6
   #secteme vsechny IP zakaznika
   cursor.execute ("select ip_adresa from lokalni_ip where cislo_smlouvy=%s and aktivni=1" % cislo_smlouvy)
   rows = cursor.fetchall()
@@ -428,7 +419,5 @@ if __name__ == "__main__":
       print("DEBUG %s" % (zakaznik))
       zakaznik.proved_shaping()
       zakaznik.aktualizuj_udaje(cursor)
-      #TODO zde by se mohlo kontrolovat, jestli nejaky zakaznik neni rizen dlouhodobe na minimalni hodnotu a tedy nemusi
-      #     byt pomoci rizeneho shapingu resitelny, pripadne je na servisni zasah nebo zmenu tarifu
 
   conn.close()

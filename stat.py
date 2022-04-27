@@ -5,7 +5,7 @@
 Popis: Viz. usage()
 Autor: Jindrich Vrba
 Dne: 28.12.2o2o
-Posledni uprava: 3o.12.2o2o
+Posledni uprava: 27.4.2o22
 """
 
 import sys, getpass, getopt, signal, os, rrdtool
@@ -43,8 +43,8 @@ def vytvor_rrd(cislo_smlouvy):
     "--step","120",
     "DS:down:GAUGE:160:0:U","DS:up:GAUGE:160:0:U",
     "RRA:AVERAGE:0.5:1:720","RRA:AVERAGE:0.5:7:720","RRA:AVERAGE:0.5:30:744","RRA:AVERAGE:0.5:720:365")
-  ##TODO elpr se momentalne spousti kazdych 5min, ale potrebuji presnejsi statistiky, kdy opravdu ke zmene doslo
-  ##     tedy zatim viz vyse kazde 2 minuty
+  ## elpr se momentalne spousti kazdych 5min, ale potrebuji presnejsi statistiky, kdy opravdu ke zmene doslo
+  ## tedy zatim viz vyse kazde 2 minuty
   ##Archivy: 1 den s presnosti 5 min, 1 tyden s presnosti 15 min, 1 mesic s presnosti 60 min, 1 rok s presnosti 24 hod
   #  "--step","300",
   #  "DS:down:GAUGE:400:0:U","DS:up:GAUGE:400:0:U",
